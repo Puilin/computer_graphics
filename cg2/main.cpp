@@ -98,15 +98,15 @@ GLfloat phi = 0.0;
 
 const GLfloat dr = 5.0 * DegreesToRadians;
 
-GLuint view; // model-view matrix uniform shader variable location
-GLuint model;
+GLuint bunny_view; // model-view matrix uniform shader variable location
+GLuint bunny_model;
 
 // Projection transformation parameters
 GLfloat fovy = 45.0; //field-of-view in y direction angle (in degrees)
 GLfloat aspect; //Viewport aspect ratio
 GLfloat zNear = 0.1, zFar = 10.0;
 
-GLuint projection; //projection matrix uniform shader variable location
+GLuint bunny_projection; //projection matrix uniform shader variable location
 GLuint color_loc;
 
 class TriMesh
@@ -169,7 +169,7 @@ public:
     void Render() {
         //set a constant color
         glUniform3fv(color_loc, 1, color);
-        glUniformMatrix4fv(model, 1, GL_TRUE, modelTransform);
+        glUniformMatrix4fv(bunny_model, 1, GL_TRUE, modelTransform);
 
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
@@ -268,6 +268,9 @@ int HitIndex(BezierCurve* curve, int x, int y)
 //TriMesh Cylinder2;
 TriMesh bunny;
 
+GLuint curve_model, curve_view, curve_projection;
+
+
 void init(void)
 {
     CObjLoader* loader = new CObjLoader();
@@ -337,9 +340,9 @@ void init(void)
     glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
 
     //initialize uniform variable from vertex shander
-    model = glGetUniformLocation(program, "model");
-    view = glGetUniformLocation(program, "view");
-    projection = glGetUniformLocation(program, "projection");
+    bunny_model = glGetUniformLocation(program, "model");
+    bunny_view = glGetUniformLocation(program, "view");
+    bunny_projection = glGetUniformLocation(program, "projection");
     color_loc = glGetUniformLocation(program, "segColor");
 
     glEnable(GL_DEPTH_TEST);
@@ -349,7 +352,7 @@ void init(void)
 
     precomputeBezierBasis();
 
-    curve = BezierCurve(vec3(-3.0, 0.0, 7.0), vec3(-4.5, 0.0, 5.5), vec3(-6.0, 0.0, 3.4), vec3(-7.5, 0.0, 1.2));
+    curve = BezierCurve(vec3(-1.0, 0.0, 3.0), vec3(-2.0, 0.0, 3.5), vec3(-3.0, 0.0, 4.0), vec3(-4.0, 0.0, 4.5));
 
     curve.updateForRendering();
 
@@ -359,7 +362,6 @@ void init(void)
     curve.colors[NumCrvVertices] = vec3(1.0, 0.0, 0.0);
     curve.colors[NumCrvVertices + 1] = vec3(1.0, 0.0, 0.0);
     curve.colors[NumCrvVertices + 2] = vec3(1.0, 0.0, 0.0);
-    curve.colors[NumCrvVertices + 3] = vec3(1.0, 0.0, 0.0);
 
     glGenVertexArrays(1, &(curve.vao));
     glBindVertexArray(curve.vao);
@@ -371,6 +373,8 @@ void init(void)
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(curve.points), curve.points);
     glBufferSubData(GL_ARRAY_BUFFER, sizeof(curve.points), sizeof(curve.colors), curve.colors);
     // 
+    //load shaders
+    glUseProgram(program);
 
     //initialize vertex position attribute from vertex shader
     glEnableVertexAttribArray(0);
@@ -379,10 +383,17 @@ void init(void)
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(sizeof(curve.points)));
 
+    //initialize uniform variable from vertex shander
+    curve_model = glGetUniformLocation(program, "model");
+    curve_view = glGetUniformLocation(program, "view");
+    curve_projection = glGetUniformLocation(program, "projection");
 
     glEnable(GL_DEPTH_TEST);
     glClearColor(1.0, 1.0, 1.0, 0.0);
 }
+
+GLfloat left = -1.0,right = 1.0;
+GLfloat bottom = -1.0, top = 1.0;
 
 void display()
 {
@@ -401,21 +412,31 @@ void display()
     mat4 vmat0 = LookAt(eye0, at0, up0);
     mat4 vmat1 = LookAt(eye1, at, up);
 
-    glUniformMatrix4fv(view, 1, GL_TRUE, vmat0);
+    glUniformMatrix4fv(bunny_view, 1, GL_TRUE, vmat0);
 
     mat4 p0 = Perspective(fovy, aspect, zNear, zFar);
-    glUniformMatrix4fv(projection, 1, GL_TRUE, p0);
+    glUniformMatrix4fv(bunny_projection, 1, GL_TRUE, p0);
 
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     //Cylinder.Render();
     bunny.Render();
 
+    mat4 p = Ortho2D(left, right, bottom, top);
+    glUniformMatrix4fv(curve_projection, 1, GL_TRUE, p);
+
+    glBindVertexArray(curve.vao);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(curve.points), curve.points);
+
+    glLineWidth(2.0f);
+    glDrawArrays(GL_LINE_STRIP, 0, NumCrvVertices + 3);
+    glBindVertexArray(0);
+
     glViewport(512, 0, 512, 512);
 
-    glUniformMatrix4fv(view, 1, GL_TRUE, vmat1);
+    glUniformMatrix4fv(bunny_view, 1, GL_TRUE, vmat1);
 
     mat4 p1 = Perspective(fovy, aspect, zNear, zFar);
-    glUniformMatrix4fv(projection, 1, GL_TRUE, p1);
+    glUniformMatrix4fv(bunny_projection, 1, GL_TRUE, p1);
 
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     //Cylinder.Render();
@@ -477,8 +498,6 @@ void mouse(GLint button, GLint action, GLint x, GLint y)
 
 void mouseMove(GLint x, GLint z)
 {
-    GLfloat left = -1.0, right = 1.0;
-    GLfloat bottom = -1.0, top = 1.0;
 
     if (crv_edit_handle != -1) {
         vec2 pixelLen((right - left) / (GLfloat)(Width), (top - bottom) / (GLfloat)Height);
