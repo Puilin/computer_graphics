@@ -1,522 +1,319 @@
+// rotating cube with two texture objects
+// change textures with 1 and 2 keys
+
 #include <vgl.h>
 #include <InitShader.h>
 #include <mat.h>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-#include "ObjLoader.h"
 
-const int NumCrvVertices = 1024;
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+typedef vec4 point4;
+typedef vec4 color4;
+
+// Texture objects and storage for texture image
+GLuint textures[3];
+
+std::vector<vec4> points;
+std::vector<vec3> normals;
+std::vector<vec2> texCoords;
+std::vector<int> indices;
+
+
+// Array of rotation angles (in degrees) for each coordinate axis
+enum { Xaxis = 0, Yaxis = 1, Zaxis = 2, NumAxes = 3 };
+int      Axis = Xaxis;
+GLfloat  Theta[NumAxes] = { 0.0, 0.0, 0.0 };
+
+GLuint ModelView, Projection;
+GLfloat fovy = 45.0;
+GLfloat aspect;
+GLfloat zNear = 0.1, zFar = 10.0;
+//----------------------------------------------------------------------------
 
 int Index = 0;
 
-GLfloat BezierBasis[NumCrvVertices][4];
 
-/* Bezier Curve */
-struct BezierCurve {
-    //vec2 BndPos[2];
-    //vec2 BndTan[2];
-    vec3 CtrlPts[4];
+//----------------------------------------------------------------------------
 
-    vec3 points[NumCrvVertices + 4];
-    vec3 colors[NumCrvVertices + 3];
+void createSphere(GLfloat radius, int NumSectors, int NumStacks)
+{
+    GLfloat x, y, z, xy;
 
+    GLfloat stackStep = M_PI / (GLfloat)NumStacks;
+    GLfloat sectorStep = 2.0 * M_PI / (GLfloat)NumSectors;
+
+    // compute vertices
+    for (int i = 0; i <= NumStacks; i++) {
+        vec4 pt;
+        vec3 nor;
+        vec2 tex;
+
+        float stackAngle = M_PI_2 - (GLfloat)i * stackStep;
+        xy = cosf(stackAngle);
+        z = sinf(stackAngle);
+
+        for (int j = 0; j <= NumSectors; j++) {
+            float sectorAngle = j * sectorStep;
+            x = xy * cosf(sectorAngle);
+            y = xy * sinf(sectorAngle);
+
+            pt = vec4(radius * x, radius * y, radius * z, 1.0);
+            nor = vec3(x, y, z);
+            tex = vec2((GLfloat)j / NumSectors, (GLfloat)i / NumStacks);
+
+            points.push_back(pt);
+            normals.push_back(nor);
+            texCoords.push_back(tex);
+        }
+    }
+
+    //create indices
+    // k1 - k1 + 1
+    // |   /   |
+    // k2 - k2 + 1
+    for (int i = 0; i < NumStacks; i++) {
+        int k1 = i * (NumSectors + 1);
+        int k2 = k1 + NumSectors + 1;
+        for (int j = 0; j < NumSectors; j++, k1++, k2++) {
+            if (i != 0) {
+                indices.push_back(k1);
+                indices.push_back(k2);
+                indices.push_back(k1 + 1);
+            }
+
+            if (i != NumStacks - 1) {
+                indices.push_back(k1 + 1);
+                indices.push_back(k2);
+                indices.push_back(k2 + 1);
+            }
+        }
+    }
+}
+
+
+//----------------------------------------------------------------------------
+void
+init()
+{
+    createSphere(0.5, 18, 36);
+
+
+    // Initialize texture objects
+    glGenTextures(3, textures);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+    int texWidth, texHeight, texChannels;
+    unsigned char* data = stbi_load("earth_basic.jpg", &texWidth, &texHeight, &texChannels, 0);
+
+    std::cout << texChannels << "\n";
+    if (data) {
+
+        //glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, TextureSize, TextureSize, 0,
+            //	  GL_RGB, GL_UNSIGNED_BYTE, image );
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texWidth, texHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    }
+    else {
+        std::cout << "Fail to load earth_basic.jpg\n";
+    }
+    stbi_image_free(data);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+    data = stbi_load("cloud.jpg", &texWidth, &texHeight, &texChannels, 0);
+    if (data) {
+
+        //glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, TextureSize, TextureSize, 0,
+            //	  GL_RGB, GL_UNSIGNED_BYTE, image );
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, texWidth, texHeight, 0, GL_RED, GL_UNSIGNED_BYTE, data);
+    }
+    else {
+        std::cout << "Fail to load cloud.jpg\n";
+    }
+    stbi_image_free(data);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, textures[2]);
+
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+    data = stbi_load("earth_terrain.jpg", &texWidth, &texHeight, &texChannels, 0);
+    if (data) {
+
+        //glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, TextureSize, TextureSize, 0,
+            //	  GL_RGB, GL_UNSIGNED_BYTE, image );
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texWidth, texHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    }
+    else {
+        std::cout << "Fail to load earth_terrain.jpg\n";
+    }
+    stbi_image_free(data);
+
+    // Create a vertex array object
     GLuint vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+
+    // Create and initialize a buffer object
     GLuint vbo;
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+        sizeof(vec4) * points.size() +
+        sizeof(vec3) * normals.size() +
+        sizeof(vec2) * texCoords.size(),
+        NULL, GL_STATIC_DRAW);
 
-    BezierCurve() {
-    }
-    BezierCurve(const vec3& p0, const vec3& p1, const vec3& p2, const vec3& p3)
-    {
-        CtrlPts[0] = p0;
-        CtrlPts[1] = p1;
-        CtrlPts[2] = p2;
-        CtrlPts[3] = p3;
-    }
+    GLuint ebo;
+    glGenBuffers(1, &ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(int) * indices.size(),
+        indices.data(), GL_STATIC_DRAW);
 
-    ~BezierCurve() {
+    // Specify an offset to keep track of where we're placing data in our
+    //   vertex array buffer.  We'll use the same technique when we
+    //   associate the offsets with vertex attribute pointers.
+    GLintptr offset = 0;
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vec4) * points.size(),
+        points.data());
+    offset += sizeof(vec4) * points.size();
 
-    }
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vec3) * normals.size(),
+        normals.data());
+    offset += sizeof(vec3) * normals.size();
 
-    vec2 evaulate(const int i)
-    {
-        vec2 pts;
-        for (int j = 0; j < 2; j++)
-            pts = BezierBasis[i][0] * CtrlPts[0][j]
-            + BezierBasis[i][1] * CtrlPts[1][j]
-            + BezierBasis[i][2] * CtrlPts[2][j]
-            + BezierBasis[i][3] * CtrlPts[3][j];
-        return pts;
-    }
+    glBufferSubData(GL_ARRAY_BUFFER, offset, sizeof(vec2) * texCoords.size(),
+        texCoords.data());
 
-    void evalulate() {
-        for (int i = 0; i < NumCrvVertices; i++) {
-            for (int j = 0; j < 3; j++)
-                points[i][j] = BezierBasis[i][0] * CtrlPts[0][j]
-                + BezierBasis[i][1] * CtrlPts[1][j]
-                + BezierBasis[i][2] * CtrlPts[2][j]
-                + BezierBasis[i][3] * CtrlPts[3][j];
-        }
-    }
-    void updateForRendering() {
-        evalulate();
-
-        // for drawing tangent handles
-        points[NumCrvVertices] = CtrlPts[3];
-        points[NumCrvVertices + 1] = CtrlPts[2];
-        points[NumCrvVertices + 2] = CtrlPts[1];
-        points[NumCrvVertices + 3] = CtrlPts[0];
-    }
-};
-
-BezierCurve curve;
-int crv_edit_handle = -1;
-
-// precompute polynomial bases for Bezier spline
-void precomputeBezierBasis()
-{
-    GLfloat t, t2, t3;
-    for (int i = 0; i < NumCrvVertices; i++) {
-        t = i * 1.0 / (GLfloat)(NumCrvVertices - 1.0);
-        t2 = t * t;
-        t3 = 1 - t;
-
-        BezierBasis[i][0] = t3 * t3 * t3;
-        BezierBasis[i][1] = 3.0 * t3 * t3 * t;
-        BezierBasis[i][2] = 3.0 * t3 * t * t;
-        BezierBasis[i][3] = t * t * t;
-    }
-}
-
-// bazier curve
-
-//viewing transformation parameters
-
-GLfloat radius = 1.0;
-GLfloat theta = 0.0;
-GLfloat phi = 0.0;
-
-const GLfloat dr = 5.0 * DegreesToRadians;
-
-GLuint bunny_view; // model-view matrix uniform shader variable location
-GLuint bunny_model;
-
-// Projection transformation parameters
-GLfloat fovy = 45.0; //field-of-view in y direction angle (in degrees)
-GLfloat aspect; //Viewport aspect ratio
-GLfloat zNear = 0.1, zFar = 10.0;
-
-GLuint bunny_projection; //projection matrix uniform shader variable location
-GLuint color_loc;
-
-class TriMesh
-{
-public:
-    int NumVertices;
-    int NumTris;
-
-    GLuint vao;
-    GLuint vbo;
-    GLuint ebo; // element buffer object for indices
-
-    //vec4* vertices;
-    //vec4 vertices[8];
-    std::vector<vec4> vertices;
-
-    vec3 color;
-    mat4 modelTransform;
-
-    //unsigned int* indices;
-    //unsigned int indices[6];
-    std::vector<unsigned int> indices;
-
-    TriMesh() {
-        NumVertices = 0;
-        NumTris = 0;
-        //vertices = NULL;
-        //indices = NULL;
-    }
-
-    ~TriMesh() {
-        glDeleteBuffers(1, &vbo);
-        glDeleteBuffers(1, &ebo);
-        glDeleteVertexArrays(1, &vao);
-
-        //if (vertices != NULL)
-         //   delete[] vertices;
-        //if (indices != NULL)
-          //  delete[] indices;
-    }
-
-    void init() {
-        glGenVertexArrays(1, &vao);
-        glGenBuffers(1, &vbo);
-        glGenBuffers(1, &ebo);
-
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vec4) * vertices.size(), vertices.data(), GL_STATIC_DRAW);
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * indices.size(), indices.data(), GL_STATIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
-        glBindVertexArray(0);
-    }
-
-    void Render() {
-        //set a constant color
-        glUniform3fv(color_loc, 1, color);
-        glUniformMatrix4fv(bunny_model, 1, GL_TRUE, modelTransform);
-
-        glBindVertexArray(vao);
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-};
-
-
-int MakeCylinder(TriMesh* mesh, GLfloat radius, GLfloat height, int nR, int nV)
-{
-    if (nR < 2 || nV < 1)
-        return -1;
-
-    GLfloat deltaR = 2.0 * M_PI / (GLfloat)nR;
-    GLfloat deltaV = height / (GLfloat)nV;
-
-    mesh->NumVertices = (nR + 1) * (nV + 1);
-    mesh->NumTris = nR * nV * 2;
-
-    mesh->vertices.resize(mesh->NumVertices);
-    mesh->indices.resize(mesh->NumTris * 3);
-
-    for (int j = 0; j <= nV; j++) {
-        for (int i = 0; i <= nR; i++) {
-            vec3 pt;
-            pt.x = radius * cos(deltaR * (GLfloat)i);
-            pt.y = radius * sin(deltaR * (GLfloat)i);
-            pt.z = deltaV * (GLfloat)j;
-            mesh->vertices[(nR + 1) * j + i] = vec4(pt, 1.0);
-        }
-    }
-
-    for (int j = 0; j < nV; j++) {
-        for (int i = 0; i < nR; i++) {
-            int quadId = nR * j + i;
-            mesh->indices[6 * quadId] = (nR + 1) * j + i;
-            mesh->indices[6 * quadId + 1] = (nR + 1) * (j + 1) + i;
-            mesh->indices[6 * quadId + 2] = (nR + 1) * j + i + 1;
-            mesh->indices[6 * quadId + 3] = (nR + 1) * (j + 1) + i;
-            mesh->indices[6 * quadId + 4] = (nR + 1) * (j + 1) + i + 1;
-            mesh->indices[6 * quadId + 5] = (nR + 1) * j + i + 1;
-        }
-    }
-    return 0;
-}
-
-int Width;
-int Height;
-
-int HitIndex(BezierCurve* curve, int x, int y)
-{
-    GLfloat left = -1.0, right = 1.0;
-    GLfloat bottom = -1.0, top = 1.0;
-
-    int ret = -1;
-    GLfloat dist[3], mindist = FLT_MAX;
-
-    // a size of one pixel in the curve coordinate system.
-    vec2 pixelLen((right - left) / (GLfloat)(Width), (top - bottom) / (GLfloat)Height);
-
-    // the current mouse point in the curve coordinate
-    vec2 mousePt, tmpVec;
-    mousePt.x = left + pixelLen[0] * (GLfloat)x;
-    mousePt.y = bottom + pixelLen[1] * (GLfloat)y;
-
-    // Measure the squared distance between mouse point and handles
-    for (int i = 0; i < 3; i++) {
-        tmpVec = curve->CtrlPts[i] - mousePt;
-        dist[i] = dot(tmpVec, tmpVec);
-    }
-    //tmpVec = curve->BndPos[0] - mousePt;
-    //dist[0] = dot(tmpVec, tmpVec);
-    //tmpVec = curve->BndPos[1] - mousePt;
-    //dist[1] = dot(tmpVec, tmpVec);
-
-    //tmpVec = (curve->BndPos[0] + curve->BndTan[0]) - mousePt;
-    //dist[2] = dot(tmpVec, tmpVec);
-    //tmpVec = (curve->BndPos[1] + curve->BndTan[1]) - mousePt;
-    //dist[3] = dot(tmpVec, tmpVec);
-
-    for (int i = 0; i < 3; i++) {
-        if (mindist > dist[i]) {
-            ret = i;
-            mindist = dist[i];
-        }
-    }
-
-    // if clicked within 10 pixel radius of one of handles then return
-    if (mindist < 100.0 * dot(pixelLen, pixelLen))
-        return ret;
-    else
-        return -1;
-}
-
-//TriMesh Cylinder;
-//TriMesh Cylinder2;
-TriMesh bunny;
-
-GLuint curve_model, curve_view, curve_projection;
-
-
-void init(void)
-{
-    CObjLoader* loader = new CObjLoader();
-    loader->Load("bunny.obj", NULL);
-
-    bunny.NumVertices = loader->vertexes.size();
-    bunny.NumTris = loader->parts[0].faces.size();
-
-    bunny.vertices.resize(bunny.NumVertices);
-    vec4 center(0.0, 0.0, 0.0, 1.0);
-    for (int i = 0; i < bunny.NumVertices; i++) {
-        tVertex vtx = loader->getVertex(i);
-        vec4 v(vtx.x, vtx.y, vtx.z, 1.0);
-        center = center + v;
-        bunny.vertices[i] = v;
-    }
-
-    center.x = center.x / bunny.NumVertices;
-    center.y = center.y / bunny.NumVertices;
-    center.z = center.z / bunny.NumVertices;
-    center.w = 1.0;
-
-    bunny.indices.resize(bunny.NumTris * 3);
-    for (int i = 0; i < bunny.NumTris; i++) {
-        tFace* face = &(loader->parts[0].faces[i]);
-
-        for (int j = 0; j < 3; j++)
-            bunny.indices[3 * i + j] = (unsigned int)(face->v[j] - 1);
-    }
-    delete loader;
-
-
-    //MakeCylinder(&Cylinder, 1.0, 1.0, 12, 2);
-    bunny.color = vec3(0.2, 0.3, 0.5);
-    // bunny.modelTransform = Translate(0, 0, 0) * RotateX(45.0) * Scale(0.5, 0.5, 1.2);
-    bunny.modelTransform = Translate(-center.x, -center.y, -center.z) * Scale(6.0);
-
-    /*MakeCylinder(&Cylinder2, 0.5, 1.0, 20, 2);
-    Cylinder2.color = vec3(1.0, 0.0, 0.0);*/
-
-    GLuint program = InitShader("vshader_multishape.glsl", "fshader_multishape.glsl");
+    // Load shaders and use the resulting shader program
+    GLuint program = InitShader("vshader_texturemapping4.glsl", "fshader_texturemapping4.glsl");
     glUseProgram(program);
 
-    bunny.init();
-    //Cylinder2.init();
-
-    //GLuint vao;
-    //glGenVertexArrays(1, &vao);
-    //glBindVertexArray(vao);
-
-    //buffer object
-    //GLuint buffer, ebo;
-    //glGenBuffers(1, &buffer);
-    //glGenBuffers(1, &ebo);
-
-    //glBindBuffer(GL_ARRAY_BUFFER, buffer);
-    //glBufferData(GL_ARRAY_BUFFER, sizeof(vec4) * Cylinder.vertices.size(), Cylinder.vertices.data(), GL_STATIC_DRAW);
-    //glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    //glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * Cylinder.indices.size(), Cylinder.indices.data(), GL_STATIC_DRAW);
-
-    //load shaders
-    //GLuint program = InitShader("vshader_multishape.glsl", "fshader_multishape.glsl");
-    //glUseProgram(program);
-
-    //initialize vertex position attribute from vertex shader
+    // set up vertex arrays
+    offset = 0;
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
-
-    //initialize uniform variable from vertex shander
-    bunny_model = glGetUniformLocation(program, "model");
-    bunny_view = glGetUniformLocation(program, "view");
-    bunny_projection = glGetUniformLocation(program, "projection");
-    color_loc = glGetUniformLocation(program, "segColor");
-
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.0, 0.0, 0.0, 0.0);
-
-    // bazier curve
-
-    precomputeBezierBasis();
-
-    curve = BezierCurve(vec3(-1.0, 0.0, 3.0), vec3(-2.0, 0.0, 3.5), vec3(-3.0, 0.0, 4.0), vec3(-4.0, 0.0, 4.5));
-
-    curve.updateForRendering();
-
-    //for colors
-    for (int i = 0; i < NumCrvVertices; i++)
-        curve.colors[i] = vec3(0.0, 0.0, 0.0);
-    curve.colors[NumCrvVertices] = vec3(1.0, 0.0, 0.0);
-    curve.colors[NumCrvVertices + 1] = vec3(1.0, 0.0, 0.0);
-    curve.colors[NumCrvVertices + 2] = vec3(1.0, 0.0, 0.0);
-
-    glGenVertexArrays(1, &(curve.vao));
-    glBindVertexArray(curve.vao);
-
-    glGenBuffers(1, &(curve.vbo));
-    glBindBuffer(GL_ARRAY_BUFFER, curve.vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(curve.points) + sizeof(curve.colors), NULL,
-        GL_STATIC_DRAW);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(curve.points), curve.points);
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(curve.points), sizeof(curve.colors), curve.colors);
-    // 
-    //load shaders
-    glUseProgram(program);
-
-    //initialize vertex position attribute from vertex shader
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(0));
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0,
+        BUFFER_OFFSET(offset));
+    offset += sizeof(vec4) * points.size();
 
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, BUFFER_OFFSET(sizeof(curve.points)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0,
+        BUFFER_OFFSET(offset));
+    offset += sizeof(vec3) * normals.size();
 
-    //initialize uniform variable from vertex shander
-    curve_model = glGetUniformLocation(program, "model");
-    curve_view = glGetUniformLocation(program, "view");
-    curve_projection = glGetUniformLocation(program, "projection");
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0,
+        BUFFER_OFFSET(offset));
+
+
+    ModelView = glGetUniformLocation(program, "ModelView");
+    Projection = glGetUniformLocation(program, "Projection");
+
+    // Set the value of the fragment shader texture sampler variable
+    //   ("texture") to the the appropriate texture unit. In this case,
+    //   zero, for GL_TEXTURE0 which was previously set by calling
+    //   glActiveTexture().
+    glUniform1i(glGetUniformLocation(program, "mainTex"), 0);
+    glUniform1i(glGetUniformLocation(program, "cloudTex"), 1);
+    glUniform1i(glGetUniformLocation(program, "terrainTex"), 2);
+
+    //theta = glGetUniformLocation( program, "theta" );
 
     glEnable(GL_DEPTH_TEST);
-    glClearColor(1.0, 1.0, 1.0, 0.0);
-}
 
-GLfloat left = -1.0,right = 1.0;
-GLfloat bottom = -1.0, top = 1.0;
-
-void display()
-{
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glViewport(0, 0, 512, 512);
-
-    vec4 eye0(-1.5, 2.0 , -1.5,
-        1.0);
-    vec4 eye1(-3.0, 0, 7.0, 1.0);
-    vec4 at(0.0, 0.0, 0.0, 1.0);
-    vec4 at0(0.0, -5.0, 0.0, 1.0);
-    vec4 up(0.0, 1.0, 0.0, 0.0);
-    vec4 up0(-1.0, 0.0, 0.0, 0.0);
-
-    mat4 vmat0 = LookAt(eye0, at0, up0);
-    mat4 vmat1 = LookAt(eye1, at, up);
-
-    glUniformMatrix4fv(bunny_view, 1, GL_TRUE, vmat0);
-
-    mat4 p0 = Perspective(fovy, aspect, zNear, zFar);
-    glUniformMatrix4fv(bunny_projection, 1, GL_TRUE, p0);
-
-    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    //Cylinder.Render();
-    bunny.Render();
-
-    mat4 p = Ortho2D(left, right, bottom, top);
-    glUniformMatrix4fv(curve_projection, 1, GL_TRUE, p);
-
-    glBindVertexArray(curve.vao);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(curve.points), curve.points);
-
-    glLineWidth(2.0f);
-    glDrawArrays(GL_LINE_STRIP, 0, NumCrvVertices + 3);
-    glBindVertexArray(0);
-
-    glViewport(512, 0, 512, 512);
-
-    glUniformMatrix4fv(bunny_view, 1, GL_TRUE, vmat1);
-
-    mat4 p1 = Perspective(fovy, aspect, zNear, zFar);
-    glUniformMatrix4fv(bunny_projection, 1, GL_TRUE, p1);
-
-    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    //Cylinder.Render();
-    bunny.Render();
-
-    //glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    //Cylinder2.Render();
-    glutSwapBuffers();
+    glClearColor(0.0, 0.0, 0.0, 1.0);
 }
 
 void
-keyboard(unsigned char key, int x, int y)
+display(void)
 {
-    switch (key) {
-    case 033:
-        exit(EXIT_SUCCESS);
-        break;
-    case 'z': zNear *= 1.1; zFar *= 1.1; break;
-    case 'Z': zNear *= 0.9; zFar *= 0.9; break;
-    case 'r': radius *= 2.0; break;
-    case 'R': radius *= 0.5; break;
-    case 'o': theta += dr; break;
-    case 'O': theta -= dr; break;
-    case 'p': phi += dr; break;
-    case 'P': phi -= dr; break;
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    case ' ':  // reset values to their defaults
-        zNear = 0.5;
-        zFar = 3.0;
+    //glUniform3fv( theta, 1, Theta );
 
-        radius = 1.0;
-        theta = 0.0;
-        phi = 0.0;
-        break;
+    const vec3 viewer_pos(0.0, 0.0, 2.0);
+    mat4  model_view = (Translate(-viewer_pos) *
+        RotateX(Theta[Xaxis]) *
+        RotateY(Theta[Yaxis]) *
+        RotateZ(Theta[Zaxis]));
+    glUniformMatrix4fv(ModelView, 1, GL_TRUE, model_view);
+
+    mat4 p = Perspective(fovy, aspect, zNear, zFar);
+    glUniformMatrix4fv(Projection, 1, GL_TRUE, p);
+
+    //glDrawArrays( GL_TRIANGLES, 0, NumVertices );
+    glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+
+    glutSwapBuffers();
+}
+
+//----------------------------------------------------------------------------
+
+void
+mouse(int button, int state, int x, int y)
+{
+    if (state == GLUT_DOWN) {
+        switch (button) {
+        case GLUT_LEFT_BUTTON:    Axis = Xaxis;  break;
+        case GLUT_MIDDLE_BUTTON:  Axis = Yaxis;  break;
+        case GLUT_RIGHT_BUTTON:   Axis = Zaxis;  break;
+        }
     }
+}
+
+//----------------------------------------------------------------------------
+
+void
+idle(void)
+{
+    Theta[Axis] += 0.01;
+
+    if (Theta[Axis] > 360.0) {
+        Theta[Axis] -= 360.0;
+    }
+
     glutPostRedisplay();
 }
 
-void mouse(GLint button, GLint action, GLint x, GLint y)
+//----------------------------------------------------------------------------
+
+void
+keyboard(unsigned char key, int mousex, int mousey)
 {
-    if (GLUT_LEFT_BUTTON == button)
-    {
-        if (GLUT_LEFT_BUTTON == button)
-        {
-            switch (action)
-            {
-            case GLUT_DOWN:
-                crv_edit_handle = HitIndex(&curve, x, Height - y);
-                break;
-            case GLUT_UP:
-                crv_edit_handle = -1;
-                break;
-            default: break;
-            }
-        }
-        glutPostRedisplay();
+    switch (key) {
+    case 033: // Escape Key
+    case 'q': case 'Q':
+        exit(EXIT_SUCCESS);
+        break;
+        //case '1':
+          //  glBindTexture( GL_TEXTURE_2D, textures[0] );
+            //break;
+
+        //case '2':
+          //  glBindTexture( GL_TEXTURE_2D, textures[1] );
+            //break;
     }
-}
 
-void mouseMove(GLint x, GLint z)
-{
-
-    if (crv_edit_handle != -1) {
-        vec2 pixelLen((right - left) / (GLfloat)(Width), (top - bottom) / (GLfloat)Height);
-        vec3 mousePt;
-        mousePt.x = left + (GLfloat)x * pixelLen[0];
-        mousePt.z = bottom + (GLfloat)(Height - z) * pixelLen[1];
-
-        curve.CtrlPts[crv_edit_handle] = mousePt;
-
-        /*if (crv_edit_handle < 2) {
-            curve.BndPos[crv_edit_handle] = mousePt;
-        }
-        else {
-            curve.BndTan[crv_edit_handle - 2] = mousePt - curve.BndPos[crv_edit_handle - 2];
-        }*/
-        curve.updateForRendering();
-
-        glutPostRedisplay();
-    }
+    glutPostRedisplay();
 }
 
 void reshape(int width, int height)
@@ -524,35 +321,31 @@ void reshape(int width, int height)
     glViewport(0, 0, width, height);
     aspect = GLfloat(width) / height;
 }
+//----------------------------------------------------------------------------
 
-int main(int argc, char** argv)
+int
+main(int argc, char** argv)
 {
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
-    glutInitWindowSize(1024, 512);
+    glutInitWindowSize(512, 512);
 
     aspect = 512.0 / 512.0;
 
-    glutInitContextVersion(4, 3);
-    //In case of MacOS
-    //glutInitContextProfie(GLUT_CORE_PROFILE);
-    glutCreateWindow("Drawing MultiShapes");
+    glutInitContextVersion(3, 2);
+    glutInitContextProfile(GLUT_CORE_PROFILE);
+    glutCreateWindow("Color Cube");
 
     glewInit();
-    init();
 
-    /*
-    printf("OpenGL %s, GLSL %s\n",
-        glGetString(GL_VERSION),
-            glGetString(GL_SHADING_LANGUAGE_VERSION));
-    */
+    init();
 
     glutDisplayFunc(display);
     glutKeyboardFunc(keyboard);
     glutMouseFunc(mouse);
-    glutMotionFunc(mouseMove);
+    glutIdleFunc(idle);
+    glutReshapeFunc(reshape);
 
     glutMainLoop();
-
     return 0;
 }
